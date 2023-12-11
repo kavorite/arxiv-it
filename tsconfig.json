@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "inlineSourceMap": true,
+    // "inlineSourceMap": true,
     "inlineSources": true,
     "module": "ESNext",
     "target": "ES6",
@@ -10,6 +10,7 @@
     "moduleResolution": "node",
     "importHelpers": true,
     "isolatedModules": true,
+    "allowSyntheticDefaultImports": true,
 	"strictNullChecks": true,
     "lib": [
       "DOM",
@@ -19,6 +20,10 @@
     ]
   },
   "include": [
-    "**/*.ts"
-  ]
+    "**/*.ts", "*.svelte"
+  ],
+  "extends": "@tsconfig/svelte/tsconfig.json",
+  "compilerOptions": {
+    "types": ["svelte", "node"],
+  }
 }
