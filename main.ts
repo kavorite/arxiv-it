@@ -97,8 +97,8 @@ export default class MyPlugin extends Plugin {
 }
 
 interface IReflowOptions {
-	width: number
-	indent: string
+	width: number;
+	indent: string;
 }
 
 function reflow(text: string, opts: IReflowOptions | undefined): string {
@@ -114,6 +114,19 @@ function reflow(text: string, opts: IReflowOptions | undefined): string {
 	// return lines.map(line => prefix + line[0].trim()).join("\n");
 	// Split the text using the regex and apply the prefix to each line
 	return text.replace(regex, (match, p1) => indent + p1.trim() + "\n").trim();
+}
+
+// eslint-disable-next-line @typescript-eslint/ban-types
+function debounce(f: Function, timeout = 250) {
+	let timer: NodeJS.Timeout | undefined = undefined;
+	return (...args: any[]) => {
+		if (timer) {
+			clearTimeout(timer);
+		}
+		timer = setTimeout(() => {
+			f(...args);
+		}, timeout);
+	};
 }
 
 class SearchModal extends Modal {
@@ -165,7 +178,7 @@ class SearchModal extends Modal {
 			})
 			.then((xml) => {
 				const parser = new DOMParser();
-				return parser.parseFromString(xml, "application/xml")
+				return parser.parseFromString(xml, "application/xml");
 			})
 			.then(this.extractMeta)
 			.then((meta) => {
@@ -177,56 +190,91 @@ class SearchModal extends Modal {
 			});
 	}
 
-	onOpen() {
-		function raiseNotice(err: any) {
-			return new Notice(`ArXiv It: import error: ${err}`);
+	createStub(url: string) {
+		const aid = url.slice(url.lastIndexOf("/") + 1);
+		if (aid === url) {
+			url = `https://arxiv.org/abs/${aid}`;
 		}
 
+		this.fetchMeta(url)
+			.then(({ title, year, authors, abstract }) => {
+				const author = `**Author${
+					authors.length > 1 ? "s" : ""
+				}:** *${authors.join(", ")}*`;
+				const surnames = authors.map((name) =>
+					name.slice(name.lastIndexOf(" ") + 1)
+				);
+				const citation =
+					authors.length < 3
+						? `${surnames.join(" and ")} (${year})`
+						: `${surnames[0]}, et al. (${year})`;
+				const content = `# ${title}\n## ${citation}\n## [ArXiv:${aid}](${url})\n${abstract}\n\n${author}\n#paper #stub\n# Discussion`;
+				return { title, content };
+			})
+			.then(({ title, content }) => {
+				return this.app.vault
+					.create(`${title}.md`, content)
+					.then(() => ({ title, content }));
+			})
+			.then(({ title }) => {
+				const { workspace } = this.app;
+				if (workspace.activeEditor?.editor) {
+					const { editor } = workspace.activeEditor;
+					editor.replaceSelection(`[[${title}]]`);
+				}
+			})
+			.then(() => this.close())
+			.catch((err) => new Notice(`ArXiv It: import error: ${err}`));
+	}
+
+	onOpen() {
 		const { contentEl } = this;
-		const input = contentEl.createEl("input", {
+		const urlInput = contentEl.createEl("input", {
 			attr: {
 				placeholder: "https://arxiv.org/abs/...",
 				style: "width: 75%",
 			},
 		});
+		const search = contentEl.createEl("input", {
+			attr: { placeholder: "Search ArXiv...", style: "width: 75%" },
+		});
+		const results = contentEl.createEl("ol");
+		search.addEventListener(
+			"keydown",
+			debounce(async (_: KeyboardEvent) => {
+				const parser = new DOMParser();
+				const endpoint = "https://export.arxiv.org/api/query";
+				const rsp = await fetch(
+					`${endpoint}?search_query=all:${search.value}`
+				);
+				const dom = parser.parseFromString(
+					await rsp.text(),
+					"application/xml"
+				);
+				results.innerHTML = "";
+				dom.querySelectorAll("feed entry").forEach((entry) => {
+					const { textContent: title } =
+						entry.querySelector("title")!;
+					const url = entry
+						.querySelector("link")!
+						.getAttribute("href")!
+						.replace(/v[0-9]+$/, "");
+					const li = contentEl.createEl("li");
+					const link = li.createEl("a", { attr: { href: "#0" } });
+					link.textContent = title!.trim();
+					link.addEventListener("click", (_: MouseEvent) => {
+						this.createStub(url);
+					});
+					results.appendChild(li);
+				});
+			})
+		);
+
 		// const button = contentEl.createEl("button", { attr: { label: "Import" }});
 		contentEl.addEventListener("keydown", (e) => {
 			if (e.key === "Enter") {
-				this.close();
-				let url = input.value.trim().toLowerCase();
-				const aid = url.slice(url.lastIndexOf("/") + 1);
-				if (aid === url) {
-					url = `https://arxiv.org/abs/${aid}`;
-				}
-
-				this.fetchMeta(url)
-					.then(({ title, year, authors, abstract }) => {
-						const author = `**Author${
-							authors.length > 1 ? "s" : ""
-						}:** *${authors.join(", ")}*`;
-						const surnames = authors.map((name) =>
-							name.slice(name.lastIndexOf(" ") + 1)
-						);
-						const citation = authors.length < 3
-								? `${surnames.join(" and ")} (${year})`
-								: `${surnames[0]}, et al. (${year})`;
-						const content = `# ${title}\n## ${citation}\n## [ArXiv:${aid}](${url})\n${abstract}\n\n${author}\n#paper #stub\n# Discussion`;
-						return { title, content };
-					})
-					.then(({ title, content }) => {
-						return this.app.vault
-							.create(`${title}.md`, content)
-							.then(() => ({ title, content }));
-					})
-					.then(({ title }) => {
-						const { workspace } = this.app;
-						if (workspace.activeEditor?.editor) {
-							const { editor } = workspace.activeEditor;
-							editor.replaceSelection(`[[${title}]]`);
-						}
-					})
-					.then(this.close)
-					.catch(raiseNotice);
+				const url = urlInput.value.trim().toLowerCase();
+				this.createStub(url);
 			}
 		});
 	}
